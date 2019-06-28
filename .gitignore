@@ -2,6 +2,7 @@
 
 # ignor folders
 **/org/
+**/deploy/
 
 # Prerequisites
 *.d
