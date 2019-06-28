@@ -10,9 +10,8 @@ import com.granitecitygearhead.frc3244.limelightlib.ControlMode.StreamType;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableEntry;
 import edu.wpi.first.networktables.NetworkTableInstance;
-import edu.wpi.first.wpilibj.Timer;
-import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
-import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
+import edu.wpi.first.wpilibj.Notifier;
+
 
 /**
 *   Lime Light Class was started by Corey Applegate of Team 3244
@@ -21,18 +20,36 @@ import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 */
 public class LimeLight {
 
-
-// Put methods for controlling this subsystem
-// here. Call these from Commands.
-
     private NetworkTable m_table;
     private String m_tableName;
+    private Boolean isConnected = false;
+    private double _hearBeatPeriod = 0.1;
+
+    class PeriodicRunnable implements java.lang.Runnable {
+	    public void run() {
+            resetPilelineLatency();
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            if(getPipelineLatency()==0.0){
+                isConnected = false;
+            }else{
+                isConnected = true;
+            }
+        }
+    }
+    Notifier _hearBeat = new Notifier(new PeriodicRunnable());
+   
     /**
      * Using the Default Lime Light NT table
      */
     public LimeLight() {
         m_tableName = "limelight";
         m_table = NetworkTableInstance.getDefault().getTable(m_tableName);
+        _hearBeat.startPeriodic(_hearBeatPeriod);
     }
 
     /**
@@ -41,6 +58,7 @@ public class LimeLight {
     public LimeLight(String tableName) {
         m_tableName = tableName;
         m_table = NetworkTableInstance.getDefault().getTable(m_tableName);
+        _hearBeat.startPeriodic(_hearBeatPeriod);
     }
 
     /**
@@ -48,29 +66,13 @@ public class LimeLight {
      */
     public LimeLight(NetworkTable table) {
         m_table = table;
-        //ToDo
-        //m_tableName = get the name of the NT key.
-    }
-    
-    public void LimeLightInit() {
-        //testAllTab();
-    }
-    private void testAllTab(){
-        ShuffleboardTab LimeLightTab = Shuffleboard.getTab(m_tableName);
-        // To Do
-        // populate tab with all the data
+        _hearBeat.startPeriodic(_hearBeatPeriod);
        
     }
 
     //This is a test
-    private boolean isConnected(){
-        resetPilelineLatency();
-        Timer.delay(.05);  //How to make this not hold the thread?
-        if(getPipelineLatency()==0.0){
-            return false;
-        }else{
-            return true;
-        }
+    public boolean isConnected(){
+        return isConnected;
     }
 
     /**
