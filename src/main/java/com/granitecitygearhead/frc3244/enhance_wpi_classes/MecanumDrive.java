@@ -11,6 +11,7 @@ import java.util.StringJoiner;
 import java.util.function.DoubleSupplier;
 
 import com.ctre.phoenix.motorcontrol.ControlMode;
+import com.ctre.phoenix.motorcontrol.can.TalonSRX;
 import com.ctre.phoenix.motorcontrol.can.WPI_TalonSRX;
 
 import edu.wpi.first.hal.FRCNetComm.tInstances;
@@ -74,29 +75,29 @@ public class MecanumDrive extends RobotDriveBase {
   private double m_rightSideInvertMultiplier = -1.0;
   private boolean m_reported;
 
-    private ControlMode m_ControlMode = ControlMode.PercentOutput;
-    private DoubleSupplier m_currentHeading;
+  private ControlMode m_ControlMode = ControlMode.PercentOutput;
+  private double m_MaxVelocity;
+ 
+  private DoubleSupplier gyrDoubleSupplier;
 
-    private double m_Maxvelocity;
+  private int m_iterationsSinceRotationCommanded  = 0;
 
+  private int m_preserveHeading_Iterations = 5;
 
-    private int m_iterationsSinceRotationCommanded;
+  private boolean m_preserveHeading_Enable = true;
 
-    private double m_desiredHeading;
+  private double kP_preserveHeading = 0.01;
 
-    private boolean m_preserveHeading_Enable  = true;
+  private double m_desiredHeading;
 
-    private int m_preserveHeading_Iterations = 5;
-
-    private double kP_preserveHeading_Telepo = 0.1;
 
   /**
    * Construct a MecanumDrive.
    *
    * <p>If a motor needs to be inverted, do so before passing it in.
    */
-  public MecanumDrive(WPI_TalonSRX frontLeftMotor, WPI_TalonSRX rearLeftMotor,
-                      WPI_TalonSRX frontRightMotor, WPI_TalonSRX rearRightMotor, DoubleSupplier currentHeading) {
+  public MecanumDrive(WPI_TalonSRX frontLeftMotor, WPI_TalonSRX rearLeftMotor, 
+                        WPI_TalonSRX frontRightMotor, WPI_TalonSRX rearRightMotor,  ControlMode controlMode, double maxVelocity) {
     verify(frontLeftMotor, rearLeftMotor, frontRightMotor, rearRightMotor);
     m_frontLeftMotor = frontLeftMotor;
     m_rearLeftMotor = rearLeftMotor;
@@ -108,11 +109,17 @@ public class MecanumDrive extends RobotDriveBase {
     addChild(m_rearRightMotor);
     instances++;
     setName("MecanumDrive", instances);
-    m_currentHeading = currentHeading;
+
+    m_ControlMode = controlMode;
+    m_MaxVelocity = maxVelocity;
+
+    gyrDoubleSupplier = null;
+    //If we have no Gyro then there can not be PreserveHeadding
+    m_preserveHeading_Enable = false;
   }
 
-  public MecanumDrive(WPI_TalonSRX frontLeftMotor, WPI_TalonSRX rearLeftMotor,
-                        WPI_TalonSRX frontRightMotor, WPI_TalonSRX rearRightMotor) {
+  public MecanumDrive(WPI_TalonSRX frontLeftMotor, WPI_TalonSRX rearLeftMotor, 
+                        WPI_TalonSRX frontRightMotor, WPI_TalonSRX rearRightMotor,  ControlMode controlMode, double maxVelocity, DoubleSupplier curretnDoubleSupplier) {
     verify(frontLeftMotor, rearLeftMotor, frontRightMotor, rearRightMotor);
     m_frontLeftMotor = frontLeftMotor;
     m_rearLeftMotor = rearLeftMotor;
@@ -124,34 +131,37 @@ public class MecanumDrive extends RobotDriveBase {
     addChild(m_rearRightMotor);
     instances++;
     setName("MecanumDrive", instances);
-    m_currentHeading = null;
-}
 
-  private double getCurrentHeading(){
-      if(m_currentHeading != null){
-        return m_currentHeading.getAsDouble();
-      }else{
-          return 0.0;
-      }
+    m_ControlMode = controlMode;
+    m_MaxVelocity = maxVelocity;
+
+    gyrDoubleSupplier = curretnDoubleSupplier;
   }
 
-/**
- * @param m_Maxvelocity the m_Maxvelocity to set
- */
-public void setControlModevelocety(double m_Maxvelocity) {
-    this.m_ControlMode = ControlMode.Velocity;
-    setMaxOutput(m_Maxvelocity * 4096 * 600);;
-}
+  /**
+   * 
+   * @param Iterations
+   */
+  public void set_m_preserveHeading_Iterations(int Iterations){
+    m_preserveHeading_Iterations = Iterations;
+  }
+  
+  /**
+   * 
+   * @param kp
+   */
+  public void set_kP_preserveHeading(double kp){
+    kP_preserveHeading = kp;
+  }
 
- /**
- * 
- */
-public void setControlModePercentOutput() {
-    this.m_ControlMode = ControlMode.PercentOutput;
-    setMaxOutput(1);
-}
 
-
+  public double getCurrentHeadding(){
+    if(gyrDoubleSupplier != null){
+      return gyrDoubleSupplier.getAsDouble();
+    }else{
+      return 0.0;
+    }
+  }
   /**
    * Verifies that all motors are nonnull, throwing a NullPointerException if any of them are.
    * The exception's error message will specify all null motors, e.g. {@code
@@ -219,6 +229,28 @@ public void setControlModePercentOutput() {
       m_reported = true;
     }
 
+    // update count of iterations since rotation last commanded
+		if ((-0.01 < zRotation) && (zRotation < 0.01)) {
+			// rotation is practically zero, so just set it to zero and
+			// increment iterations
+			zRotation = 0.0;
+			m_iterationsSinceRotationCommanded++;
+		} else {
+			// rotation is being commanded, so clear iteration counter
+			m_iterationsSinceRotationCommanded = 0;
+		}
+
+		
+    // preserve heading when recently stopped commanding rotations
+		if (m_iterationsSinceRotationCommanded == m_preserveHeading_Iterations) {
+			m_desiredHeading = getCurrentHeadding();
+		} else if (m_iterationsSinceRotationCommanded > m_preserveHeading_Iterations) {
+			if(m_preserveHeading_Enable){
+				zRotation = (m_desiredHeading - getCurrentHeadding()) * kP_preserveHeading; 
+				//SmartDashboard.putNumber("MaintainHeaading ROtation", rotation);
+			}
+    }
+
     ySpeed = limit(ySpeed);
     ySpeed = applyDeadband(ySpeed, m_deadband);
 
@@ -229,23 +261,6 @@ public void setControlModePercentOutput() {
     Vector2d input = new Vector2d(ySpeed, xSpeed);
     input.rotate(-gyroAngle);
 
-        if(Math.abs(zRotation) > 0.01){
-            m_iterationsSinceRotationCommanded = 0;
-        }else{
-            m_iterationsSinceRotationCommanded++;
-        }
-  
-        // preserve heading when recently stopped commanding rotations
-        if (m_iterationsSinceRotationCommanded == m_preserveHeading_Iterations) {
-            m_desiredHeading = getCurrentHeading();
-        } else if (m_iterationsSinceRotationCommanded > m_preserveHeading_Iterations) {
-            if(m_preserveHeading_Enable){
-                zRotation = (m_desiredHeading - getCurrentHeading()) * kP_preserveHeading_Telepo; 
-                //SmartDashboard.putNumber("MaintainHeaading ROtation", rotation);
-            }
-        }
-
-    
 
 
     double[] wheelSpeeds = new double[4];
@@ -256,24 +271,39 @@ public void setControlModePercentOutput() {
 
     normalize(wheelSpeeds);
 
-    m_frontLeftMotor.set(m_ControlMode, wheelSpeeds[MotorType.kFrontLeft.value] * m_maxOutput);
-    m_frontRightMotor.set(m_ControlMode, wheelSpeeds[MotorType.kFrontRight.value] * m_maxOutput * m_rightSideInvertMultiplier);
-    m_rearLeftMotor.set(m_ControlMode, wheelSpeeds[MotorType.kRearLeft.value] * m_maxOutput);
-    m_rearRightMotor.set(m_ControlMode, wheelSpeeds[MotorType.kRearRight.value] * m_maxOutput * m_rightSideInvertMultiplier);
+    double scale;
+    if(m_ControlMode == ControlMode.Velocity){
+      scale = m_MaxVelocity * 4096 / 600;
+    }else{
+      scale = m_maxOutput;
+    }
+    
+    m_frontLeftMotor.set(m_ControlMode, wheelSpeeds[MotorType.kFrontLeft.value] * scale);
+    m_frontRightMotor.set(m_ControlMode, wheelSpeeds[MotorType.kFrontRight.value] * scale * m_rightSideInvertMultiplier);
+    m_rearLeftMotor.set(m_ControlMode, wheelSpeeds[MotorType.kRearLeft.value] * scale);
+    m_rearRightMotor.set(m_ControlMode, wheelSpeeds[MotorType.kRearRight.value] * scale * m_rightSideInvertMultiplier);
 
     feed();
+  }
+
+  private double getCurrentPosition() {
+    return m_frontLeftMotor.getSelectedSensorPosition();
   }
 
   /**
    * Drive method for Mecanum platform.
    *
-   * <p>Angles are measured counter-clockwise from straight ahead. The speed at which the robot
-   * drives (translation) is independent from its angle or rotation rate.
+   * <p>
+   * Angles are measured counter-clockwise from straight ahead. The speed at which
+   * the robot drives (translation) is independent from its angle or rotation
+   * rate.
    *
-   * @param magnitude The robot's speed at a given angle [-1.0..1.0]. Forward is positive.
-   * @param angle     The angle around the Z axis at which the robot drives in degrees [-180..180].
-   * @param zRotation The robot's rotation rate around the Z axis [-1.0..1.0]. Clockwise is
+   * @param magnitude The robot's speed at a given angle [-1.0..1.0]. Forward is
    *                  positive.
+   * @param angle     The angle around the Z axis at which the robot drives in
+   *                  degrees [-180..180].
+   * @param zRotation The robot's rotation rate around the Z axis [-1.0..1.0].
+   *                  Clockwise is positive.
    */
   @SuppressWarnings("ParameterName")
   public void drivePolar(double magnitude, double angle, double zRotation) {
