@@ -17,6 +17,7 @@ import edu.wpi.first.wpilibj.Notifier;
 *   Lime Light Class was started by Corey Applegate of Team 3244
 *   Granite City Gearheads. We Hope you Enjoy the Lime Light
 *   Camera. 
+*   implementation 'com.github.GraniteCityGearheads3244:Robot_Libraries:master-SNAPSHOT'
 */
 public class LimeLight {
 
